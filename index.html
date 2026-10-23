@@ -322,7 +322,7 @@ const SCORE = {
   ANG_WARN: 3, ANG_BAD: 6, ANG_WARN_PTS: 5, ANG_BAD_PTS: 10,
   GAP_MIN: 0.15, GAP_MAX: 0.80, GAP_PTS: 5,   // 倒库：车尾距库底线理想区间
   PASS: 80, DEV_MARK: 0.35,
-  EV_ALONG: 0.25, EV_ANGLE: 5,                // 打方向时机：超过 0.25 m / 5° 给出建议
+  EV_ALONG: 0.15, EV_ANGLE: 4,                // 打方向时机：超过 0.15 m / 4° 给出建议（库位两侧余量只有 0.3 m）
 };
 const CONE = { R: 0.17, H: 0.7, HIT: 0.2 };   // 雪糕筒半径 / 高度 / 碰撞半边长
 
@@ -1393,7 +1393,8 @@ const PointFX = {
     this.carRing.visible = on && !!(step && step.point && Array.isArray(step.point.car));
     this.carRing.material.opacity = pulse;
     const hood = on && step && step.hood;
-    this.hoodDot.visible = this.hoodLabel.visible = this.sight.visible = this.groundRing.visible = !!hood;
+    this.hoodDot.visible = this.sight.visible = this.groundRing.visible = !!hood;
+    this.hoodLabel.visible = !!hood && isInterior(CamSys.view);   // 文字标签只在车内视角显示
     if (hood) {
       const g = this.hoodGround(st, hood), hp = carToWorld(st, hood.pt.local[0], hood.pt.local[2]);
       const sp = this.sight.geometry.attributes.position; sp.setXYZ(0, hp.x, hood.pt.local[1], hp.z); sp.setXYZ(1, g.world.x, 0.02, g.world.z); sp.needsUpdate = true;
@@ -1461,7 +1462,7 @@ const MirrorOverlay = {
     for (const m of Mirrors.list) {
       const g = m.canvas.getContext('2d'); g.clearRect(0, 0, m.canvas.width, m.canvas.height);
       if (!on || !m.quad.visible || !st || !st.point || st.point.mirror !== m.key) continue;
-      const pt = st.point, k = m.dpr, P = (x, z, y = 0) => Mirrors.project(m, x, y, z);
+      const pt = st.point, k = m.dpr * Math.max(1, Mirrors.rects[m.key].w / 300), P = (x, z, y = 0) => Mirrors.project(m, x, y, z);   // 镜子越大，标注越大
       g.lineWidth = 3 * k; g.font = `bold ${12 * k}px sans-serif`;
       const mt = pt.metric ? pt.metric() : { text: '', ok: false };
       const col = mt.ok ? '#3ddc84' : mt.bad ? '#ff5252' : '#00e5ff';
@@ -1573,6 +1574,17 @@ const Score = {
         if (Math.abs(err) > SCORE.EV_ALONG) list.push([Math.abs(err) * 2, `${T.name}${err > 0 ? '偏晚' : '偏早'} ${fmt(Math.abs(err))} m：${err > 0 ? T.late : T.early}`]);
       }
     });
+    // 压线 / 出线时解释原因：最终横向偏向哪一侧，对应哪一把方向
+    const lineHit = S.events.find((e) => e.key.startsWith('line:'));
+    if ((lineHit || !c.inSlot) && Math.abs(c.lateral) > 0.12) {
+      const side = c.lateral > 0 ? '右' : '左';
+      let cause;
+      if (LEVEL.type === 'garage') {
+        const inner = c.lateral * LEVEL.side > 0;
+        cause = inner ? `偏向库角一侧，多半是向${sideName(LEVEL.side)}打满偏早（第 1 步停过了定点）` : `偏向外侧，多半是向${sideName(LEVEL.side)}打满偏晚（没到定点就打，或倒车后才打方向）`;
+      } else cause = c.lateral > 0 ? '偏向路沿，多半是向左打满偏晚' : '离路沿太远，多半是向左打满偏早';
+      list.push([2.5, `${lineHit ? lineHit.text + '：' : ''}车身最终偏${side} ${fmt(Math.abs(c.lateral))} m、夹角 ${fmt(Math.abs(c.thErr), 1)}°，${cause}。库位两侧余量只有约 0.3 m，定点每差 10 cm，入库后就横向偏约 10 cm。`]);
+    }
     if (m.minCorner < 0.2) list.push([1.6, `车身距${SLOT.keyName}最近仅 ${fmt(m.minCorner)} m，非常危险。打方向时一定要盯住对应的后视镜。`]);
     if (SLOT.gapRule === 'rear' && c.inSlot && c.rearGap > SCORE.GAP_MAX) list.push([c.rearGap, `停车偏早，车尾距库底线还有 ${fmt(c.rearGap)} m。看镜中后轮与库底线的点位（约 1.2 m）。`]);
     if (c.rearGap < SCORE.GAP_MIN) list.push([2, `倒得太深（车尾余量 ${fmt(c.rearGap)} m），提前减速。`]);
